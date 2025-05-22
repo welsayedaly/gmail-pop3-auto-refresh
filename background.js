@@ -24,7 +24,16 @@ function execute() {
         createOrFindTab();
       } else {
         // Tab exists, send message
-        chrome.tabs.sendMessage(settingsTabId, { action: "clickButton" });
+        chrome.tabs.sendMessage(settingsTabId, { action: "clickButton" })
+          .then(response => {
+            console.log('[GPAR] Response:', response);
+          })
+          .catch(error => {
+            console.log("Error sending message to tab:", error);
+            // If we can't communicate with the tab, reset and try again
+            settingsTabId = null;
+            createOrFindTab();
+          });
       }
     });
   } else {
@@ -33,20 +42,42 @@ function execute() {
   
   function createOrFindTab() {
     // Query only for tabs that might match our URL
-    chrome.tabs.query({url: "*mail.google.com*"}, (tabs) => {
-      const chromeSettingTab = tabs.find((tab) => tab.url && tab.url.includes(url));
+    chrome.tabs.query({url: "*://mail.google.com/*"}, (tabs) => {
+      const chromeSettingTab = tabs && tabs.length ? tabs.find((tab) => tab.url && tab.url.includes(url)) : null;
       
       if (chromeSettingTab) {
         // Found existing tab, save its ID
         settingsTabId = chromeSettingTab.id;
-        chrome.tabs.sendMessage(chromeSettingTab.id, { action: "clickButton" });
+        chrome.tabs.sendMessage(chromeSettingTab.id, { action: "clickButton" })
+          .then(response => {
+            console.log('[GPAR] Response:', response);
+          })
+          .catch(error => {
+            console.log("Error sending message to tab:", error);
+            // If message fails, try reloading the tab
+            chrome.tabs.reload(chromeSettingTab.id);
+          });
       } else {
         // Only create a new tab if we don't have ANY matching tabs
         chrome.tabs.create({ url, pinned: true }, (tab) => {
           settingsTabId = tab.id;
           chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
             if (tabId === tab.id && info.status === "complete") {
-              chrome.tabs.sendMessage(tab.id, { action: "clickButton" });
+              // Add a longer delay to ensure content script is fully loaded
+              setTimeout(() => {
+                chrome.tabs.sendMessage(tab.id, { action: "clickButton" })
+                  .then(response => {
+                    console.log('[GPAR] Response from new tab:', response);
+                  })
+                  .catch(error => {
+                    console.log("Error sending message to new tab:", error);
+                    // Try again with a longer delay
+                    setTimeout(() => {
+                      chrome.tabs.sendMessage(tab.id, { action: "clickButton" })
+                        .catch(e => console.log("Second attempt failed:", e));
+                    }, 3000);
+                  });
+              }, 2000);
               chrome.tabs.onUpdated.removeListener(listener);
             }
           });
