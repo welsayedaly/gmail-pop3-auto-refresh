@@ -41,12 +41,13 @@ function execute() {
   }
   
   function createOrFindTab() {
-    // Query only for tabs that might match our URL
+    // Query for Gmail tabs
     chrome.tabs.query({url: "*://mail.google.com/*"}, (tabs) => {
-      const chromeSettingTab = tabs && tabs.length ? tabs.find((tab) => tab.url && tab.url.includes(url)) : null;
+      // First check if we have a tab already on the settings page
+      let chromeSettingTab = tabs.find((tab) => tab.url && tab.url.includes(url));
       
       if (chromeSettingTab) {
-        // Found existing tab, save its ID
+        // Found existing settings tab, save its ID
         settingsTabId = chromeSettingTab.id;
         chrome.tabs.sendMessage(chromeSettingTab.id, { action: "clickButton" })
           .then(response => {
@@ -54,34 +55,55 @@ function execute() {
           })
           .catch(error => {
             console.log("Error sending message to tab:", error);
-            // If message fails, try reloading the tab
             chrome.tabs.reload(chromeSettingTab.id);
           });
       } else {
-        // Only create a new tab if we don't have ANY matching tabs
-        chrome.tabs.create({ url, pinned: true }, (tab) => {
-          settingsTabId = tab.id;
-          chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
-            if (tabId === tab.id && info.status === "complete") {
-              // Add a longer delay to ensure content script is fully loaded
-              setTimeout(() => {
-                chrome.tabs.sendMessage(tab.id, { action: "clickButton" })
-                  .then(response => {
-                    console.log('[GPAR] Response from new tab:', response);
-                  })
-                  .catch(error => {
-                    console.log("Error sending message to new tab:", error);
-                    // Try again with a longer delay
-                    setTimeout(() => {
-                      chrome.tabs.sendMessage(tab.id, { action: "clickButton" })
-                        .catch(e => console.log("Second attempt failed:", e));
-                    }, 3000);
-                  });
-              }, 2000);
-              chrome.tabs.onUpdated.removeListener(listener);
-            }
+        // Check for any Gmail tab we can navigate to settings
+        let gmailTab = tabs.find((tab) => tab.url && tab.url.includes("mail.google.com"));
+        
+        if (gmailTab) {
+          // Navigate existing Gmail tab to settings
+          settingsTabId = gmailTab.id;
+          chrome.tabs.update(gmailTab.id, { url: url, active: false }, () => {
+            chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+              if (tabId === gmailTab.id && info.status === "complete") {
+                setTimeout(() => {
+                  chrome.tabs.sendMessage(gmailTab.id, { action: "clickButton" })
+                    .then(response => {
+                      console.log('[GPAR] Response from updated tab:', response);
+                    })
+                    .catch(error => {
+                      console.log("Error sending message to updated tab:", error);
+                    });
+                }, 2000);
+                chrome.tabs.onUpdated.removeListener(listener);
+              }
+            });
           });
-        });
+        } else {
+          // Create new pinned tab only if no Gmail tabs exist
+          chrome.tabs.create({ url, pinned: true }, (tab) => {
+            settingsTabId = tab.id;
+            chrome.tabs.onUpdated.addListener(function listener(tabId, info) {
+              if (tabId === tab.id && info.status === "complete") {
+                setTimeout(() => {
+                  chrome.tabs.sendMessage(tab.id, { action: "clickButton" })
+                    .then(response => {
+                      console.log('[GPAR] Response from new tab:', response);
+                    })
+                    .catch(error => {
+                      console.log("Error sending message to new tab:", error);
+                      setTimeout(() => {
+                        chrome.tabs.sendMessage(tab.id, { action: "clickButton" })
+                          .catch(e => console.log("Second attempt failed:", e));
+                      }, 3000);
+                    });
+                }, 2000);
+                chrome.tabs.onUpdated.removeListener(listener);
+              }
+            });
+          });
+        }
       }
     });
   }
